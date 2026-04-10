@@ -7,8 +7,6 @@ export default function App() {
   const [chartData, setChartData] = useState([]); 
   const [signals, setSignals] = useState([]);
   const [supportLevels, setSupportLevels] = useState([]); 
-  const [targetLevels, setTargetLevels] = useState([]); 
-  const [rsiData, setRsiData] = useState([]);
   const [rsiPeriod, setRsiPeriod] = useState(14);
   const [oversoldLimit, setOversoldLimit] = useState(35); 
   const [isLoading, setIsLoading] = useState(false);
@@ -17,7 +15,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [isSimulated, setIsSimulated] = useState(false);
 
-  // Genera dati simulati se i server reali sono bloccati
+  // Generatore di dati simulati per evitare lo schermo vuoto
   const generateSimulatedData = (ticker) => {
     const newData = [];
     let currentPrice = ticker.toUpperCase().includes('BTC') ? 65000 : 
@@ -33,7 +31,7 @@ export default function App() {
     setChartData(newData);
     setSymbol(ticker.toUpperCase() + ' (Simulato)');
     setIsSimulated(true);
-    setError("Utilizzando dati simulati per ottimizzazione visualizzazione.");
+    setError("Dati reali non disponibili. Modalità simulata attiva.");
   };
 
   const calculateRSI = (data, period) => {
@@ -57,22 +55,14 @@ export default function App() {
   };
 
   const analyzeCyclesV5 = (data, rsiValues, threshold) => {
-    if (data.length < 15) return { signalsList: [], supports: [], targets: [] };
+    if (data.length < 15) return { signalsList: [], supports: [] };
     const signalsList = [];
     const supports = [];
-    const targets = [];
     
     for (let i = 10; i < data.length - 1; i++) {
       const p1 = data[i-1].price;
       const p0 = data[i].price;
       const rsi1 = rsiValues[i-1];
-
-      if (data[i-1].price > data[i-2].price && data[i-1].price > data[i].price) {
-        if (!targets.some(t => Math.abs(t.price - data[i-1].price) / t.price < 0.003)) {
-          targets.push({ price: data[i-1].price, index: i-1 });
-        }
-      }
-
       let isBuySignal = false;
       let signalType = "standard";
       let msg = "";
@@ -81,10 +71,8 @@ export default function App() {
         if (data[prev] && data[prev-1] && data[prev].price < data[prev-1].price && data[prev].price < data[prev+1].price) {
           if (data[i-1].price <= data[prev].price && rsiValues[i-1] > rsiValues[prev] && rsiValues[i-1] < 45) {
              if (p0 > p1) {
-                isBuySignal = true;
-                signalType = "divergence";
-                msg = "Divergenza Ciclica";
-                break;
+                isBuySignal = true; signalType = "divergence";
+                msg = "Divergenza Ciclica"; break;
              }
           }
         }
@@ -94,17 +82,13 @@ export default function App() {
         supports.forEach(level => {
           const diff = Math.abs(p1 - level.price) / level.price;
           if (diff < 0.0022 && p1 < data[i-2].price && p0 > p1) {
-            isBuySignal = true;
-            signalType = "support";
-            msg = "Supporto Ciclico";
+            isBuySignal = true; signalType = "support"; msg = "Supporto Ciclico";
           }
         });
       }
 
       if (!isBuySignal && rsi1 < threshold && p0 > p1) {
-        isBuySignal = true;
-        signalType = "standard";
-        msg = "Inizio Ciclo";
+        isBuySignal = true; signalType = "standard"; msg = "Inizio Ciclo";
       }
 
       if (isBuySignal) {
@@ -117,40 +101,26 @@ export default function App() {
         }
       }
     }
-    return { signalsList, supports, targets };
+    return { signalsList, supports };
   };
 
   const fetchYahooData = async (ticker) => {
     setIsLoading(true); setError(null); setIsSimulated(false);
     const timeout = setTimeout(() => {
-      if (isLoading && chartData.length === 0) {
-        generateSimulatedData(ticker);
-        setIsLoading(false);
-      }
+      if (isLoading && chartData.length === 0) { generateSimulatedData(ticker); setIsLoading(false); }
     }, 5000);
 
     try {
       const t = ticker.toUpperCase();
       const directUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`;
-      const proxies = [
-        `/api/yahoo/${t}?interval=1d&range=1y`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}`,
-        `https://corsproxy.io/?${encodeURIComponent(directUrl)}`
-      ];
-
-      let json = null;
-      let success = false;
+      const proxies = [`/api/yahoo/${t}?interval=1d&range=1y`, `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}` ];
+      let json = null; let success = false;
       for (const p of proxies) {
         try {
           const res = await fetch(p);
-          if (res.ok) {
-            const text = await res.text();
-            json = JSON.parse(text);
-            if (json?.chart?.result) { success = true; break; }
-          }
+          if (res.ok) { const text = await res.text(); json = JSON.parse(text); if (json?.chart?.result) { success = true; break; } }
         } catch (e) { continue; }
       }
-
       clearTimeout(timeout);
       if (success && json?.chart?.result) {
         const result = json.chart.result[0];
@@ -168,11 +138,9 @@ export default function App() {
   useEffect(() => {
     if (chartData.length === 0) return;
     const rsi = calculateRSI(chartData, rsiPeriod);
-    setRsiData(rsi);
-    const { signalsList, supports, targets } = analyzeCyclesV5(chartData, rsi, oversoldLimit);
+    const { signalsList, supports } = analyzeCyclesV5(chartData, rsi, oversoldLimit);
     setSignals([...signalsList].reverse());
     setSupportLevels(supports);
-    setTargetLevels(targets);
 
     const draw = () => {
       const canvas = canvasRef.current;
@@ -180,32 +148,26 @@ export default function App() {
       if (!canvas || !rsiCanvas) return;
       const ctx = canvas.getContext('2d');
       const rCtx = rsiCanvas.getContext('2d');
-      const { width, height } = canvas;
       
-      // FIX: Ensure rsiCanvas internal size matches CSS for sharp rendering
-      rsiCanvas.width = rsiCanvas.clientWidth;
-      rsiCanvas.height = rsiCanvas.clientHeight;
-      const rw = rsiCanvas.width;
-      const rh = rsiCanvas.height;
-
-      ctx.clearRect(0, 0, width, height);
-
+      canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+      rsiCanvas.width = rsiCanvas.clientWidth; rsiCanvas.height = rsiCanvas.clientHeight;
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       const prices = chartData.map(d => d.price);
       const minP = Math.min(...prices);
       const maxP = Math.max(...prices);
       const range = (maxP - minP) * 1.15;
       const padding = (maxP - minP) * 0.07;
-      const getX = (i) => (i / (chartData.length - 1)) * width;
-      const getY = (v) => height - ((v - (minP - padding)) / range) * height;
+      const getX = (i) => (i / (chartData.length - 1)) * canvas.width;
+      const getY = (v) => canvas.height - ((v - (minP - padding)) / range) * canvas.height;
 
       ctx.setLineDash([6, 4]);
       supports.forEach(s => {
         ctx.strokeStyle = 'rgba(34, 197, 94, 0.15)';
-        ctx.beginPath(); ctx.moveTo(getX(s.index), getY(s.price)); ctx.lineTo(width, getY(s.price)); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(getX(s.index), getY(s.price)); ctx.lineTo(canvas.width, getY(s.price)); ctx.stroke();
       });
       ctx.setLineDash([]);
-
-      ctx.beginPath(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2;
       chartData.forEach((d, i) => i === 0 ? ctx.moveTo(getX(i), getY(d.price)) : ctx.lineTo(getX(i), getY(d.price)));
       ctx.stroke();
 
@@ -214,144 +176,87 @@ export default function App() {
         ctx.fillStyle = s.stype === 'divergence' ? '#a855f7' : '#22c55e';
         ctx.beginPath(); ctx.arc(x, y, s.stype === 'divergence' ? 5 : 4, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-        if (s.stype === 'divergence') {
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.3)';
-          ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.stroke();
-        }
       });
 
-      // --- RENDERING RSI POTENZIATO ---
-      rCtx.clearRect(0, 0, rw, rh);
-      
-      // Linee di riferimento (30, 50, 70)
-      rCtx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-      rCtx.lineWidth = 1;
-      rCtx.font = '8px monospace';
-      rCtx.fillStyle = '#475569';
-      [30, 50, 70].forEach(level => {
-        const y = rh - (level / 100) * rh;
-        rCtx.beginPath(); rCtx.moveTo(0, y); rCtx.lineTo(rw, y); rCtx.stroke();
-        rCtx.fillText(level, 5, y - 2);
+      rCtx.clearRect(0, 0, rsiCanvas.width, rsiCanvas.height);
+      rCtx.strokeStyle = 'rgba(255,255,255,0.05)';
+      [30, 70].forEach(l => {
+        const y = rsiCanvas.height - (l/100) * rsiCanvas.height;
+        rCtx.beginPath(); rCtx.moveTo(0, y); rCtx.lineTo(rsiCanvas.width, y); rCtx.stroke();
       });
-
-      // Sfumatura sotto l'RSI
-      const gradient = rCtx.createLinearGradient(0, 0, 0, rh);
-      gradient.addColorStop(0, 'rgba(168, 85, 247, 0.15)');
-      gradient.addColorStop(1, 'rgba(168, 85, 247, 0)');
-
-      rCtx.beginPath();
-      let firstPoint = true;
+      rCtx.beginPath(); rCtx.strokeStyle = '#a855f7'; rCtx.lineWidth = 2;
       rsi.forEach((v, i) => {
         if (v === null) return;
-        const x = (i / (rsi.length - 1)) * rw;
-        const y = rh - (v / 100) * rh;
-        if (firstPoint) { rCtx.moveTo(x, y); firstPoint = false; }
-        else { rCtx.lineTo(x, y); }
-      });
-      rCtx.lineTo(rw, rh); rCtx.lineTo(0, rh);
-      rCtx.fillStyle = gradient;
-      rCtx.fill();
-
-      // Linea RSI principale
-      rCtx.beginPath();
-      rCtx.strokeStyle = '#a855f7';
-      rCtx.lineWidth = 2.2;
-      rCtx.shadowBlur = 4;
-      rCtx.shadowColor = 'rgba(168, 85, 247, 0.6)';
-      firstPoint = true;
-      rsi.forEach((v, i) => {
-        if (v === null) return;
-        const x = (i / (rsi.length - 1)) * rw;
-        const y = rh - (v / 100) * rh;
-        if (firstPoint) { rCtx.moveTo(x, y); firstPoint = false; }
-        else { rCtx.lineTo(x, y); }
+        const x = (i / (rsi.length - 1)) * rsiCanvas.width;
+        const y = rsiCanvas.height - (v / 100) * rsiCanvas.height;
+        i === 0 ? rCtx.moveTo(x, y) : rCtx.lineTo(x, y);
       });
       rCtx.stroke();
-      rCtx.shadowBlur = 0; // Reset shadow
     };
-    const timer = setTimeout(draw, 50);
-    return () => clearTimeout(timer);
-  }, [chartData, rsiPeriod, oversoldLimit]);
+    const timer = setTimeout(draw, 100);
+    window.addEventListener('resize', draw);
+    return () => { clearTimeout(timer); window.removeEventListener('resize', draw); };
+  }, [chartData, oversoldLimit]);
 
   useEffect(() => { fetchYahooData('EURUSD=X'); }, []);
 
   return (
-    <div className="h-screen bg-slate-950 text-slate-200 p-2 md:p-4 font-sans flex flex-col overflow-hidden">
-      <header className="flex justify-between items-center mb-3 border-b border-slate-800 pb-2">
+    <div className="fixed inset-0 bg-slate-950 text-slate-200 p-3 md:p-4 font-sans flex flex-col overflow-hidden">
+      <header className="flex justify-between items-center mb-3 h-10 border-b border-slate-800 shrink-0">
         <div className="flex items-center space-x-2">
-          <Zap className={`text-yellow-500 fill-yellow-500 ${isLoading ? 'animate-pulse' : ''}`} size={20} />
-          <h1 className="text-lg font-black tracking-tighter uppercase italic text-white">CycleMaster <span className="text-blue-500 text-[10px] not-italic">V5 PRO</span></h1>
+          <Zap className="text-yellow-500 fill-yellow-500" size={18} />
+          <h1 className="text-md font-black tracking-tighter uppercase italic">CycleMaster <span className="text-blue-500 text-[9px] not-italic font-bold">V5.1</span></h1>
         </div>
         <form onSubmit={(e) => { e.preventDefault(); fetchYahooData(inputSymbol); }} className="flex">
-          <input 
-            className="bg-slate-900 border border-slate-700 px-2 py-1 rounded-l-md outline-none focus:border-blue-500 text-xs w-24 md:w-40 text-white" 
-            value={inputSymbol} 
-            onChange={e => setInputSymbol(e.target.value.toUpperCase())} 
-          />
-          <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700 shadow-lg"><Search size={14} /></button>
+          <input className="bg-slate-900 border border-slate-700 px-2 py-1 rounded-l-md outline-none focus:border-blue-500 text-xs w-24 md:w-40 text-white" value={inputSymbol} onChange={e => setInputSymbol(e.target.value)} />
+          <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700 transition-colors"><Search size={14} /></button>
         </form>
       </header>
 
-      {error && (
-        <div className="mb-2 p-2 bg-yellow-900/10 border border-yellow-800/30 rounded-lg text-[9px] text-yellow-400 flex items-center">
-          <AlertTriangle size={12} className="mr-1 shrink-0" /> {error}
-        </div>
-      )}
-
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-3 overflow-hidden">
-        <div className="lg:col-span-3 flex flex-col space-y-3 overflow-hidden">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl relative flex-[3] flex flex-col">
-            <div className="flex justify-between items-center mb-2">
-              <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{symbol}</h2>
-              <div className="flex space-x-3 text-[8px] font-bold">
-                <span className="flex items-center text-purple-400"><div className="w-1.5 h-1.5 bg-purple-500 rounded-full mr-1"></div> Divergenza</span>
-                <span className="flex items-center text-green-400"><div className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1"></div> Supporto</span>
-              </div>
-            </div>
-            <div className="relative flex-1 bg-slate-950 rounded-lg overflow-hidden border border-slate-800/50">
-              <canvas ref={canvasRef} width={1200} height={600} className="w-full h-full" />
-              {isLoading && chartData.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm">
-                  <Loader2 className="animate-spin text-blue-500" size={24} />
+      <div className="flex-1 flex flex-col lg:flex-row gap-3 min-h-0 overflow-hidden">
+        <div className="flex-[3] flex flex-col gap-3 min-h-0">
+          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl relative min-h-0">
+             <div className="flex justify-between items-center mb-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{symbol}</span>
+                <div className="flex gap-4 text-[8px] font-bold uppercase">
+                   <span className="flex items-center text-purple-400"><div className="w-1.5 h-1.5 bg-purple-500 rounded-full mr-1"></div> Divergenza</span>
+                   <span className="flex items-center text-green-400"><div className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1"></div> Supporto</span>
                 </div>
-              )}
-            </div>
+             </div>
+             <div className="w-full h-[calc(100%-25px)] bg-slate-950 rounded border border-slate-800/50">
+                <canvas ref={canvasRef} className="w-full h-full" />
+             </div>
           </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 h-32 flex flex-col shadow-lg">
-            <h2 className="text-[9px] font-bold text-slate-400 mb-2 uppercase tracking-widest flex items-center">
-              <BarChart3 size={12} className="mr-1" /> RSI Oscillator (Wilder's Method)
-            </h2>
-            <div className="flex-1 bg-slate-950 rounded border border-slate-800/50 relative overflow-hidden">
-              <canvas ref={rsiCanvasRef} className="w-full h-full" />
-            </div>
+          <div className="h-20 bg-slate-900 border border-slate-800 rounded-xl p-2 shrink-0">
+             <div className="text-[8px] font-bold text-slate-500 mb-1 uppercase">RSI Strength</div>
+             <canvas ref={rsiCanvasRef} className="w-full h-[calc(100%-12px)] bg-slate-950 rounded" />
           </div>
         </div>
 
-        <div className="flex flex-col space-y-3 overflow-hidden h-full">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-lg">
-            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Settings size={12} className="mr-1"/> Config</h3>
-            <div className="space-y-2">
-              <label className="text-[9px] block text-slate-500 uppercase font-bold">Sensibilità ({oversoldLimit})</label>
-              <input type="range" min="20" max="45" value={oversoldLimit} onChange={e => setOversoldLimit(Number(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg appearance-none accent-blue-500 cursor-pointer" />
+        <div className="flex-1 flex flex-col gap-3 min-h-0 lg:w-72">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shrink-0">
+            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Settings size={12} className="mr-1"/> Setup</h3>
+            <div className="space-y-1">
+              <div className="flex justify-between text-[9px] text-slate-500 uppercase font-bold"><span>Sensibilità</span><span>{oversoldLimit}</span></div>
+              <input type="range" min="20" max="45" value={oversoldLimit} onChange={e => setOversoldLimit(Number(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg accent-blue-500 cursor-pointer" />
             </div>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex-1 flex flex-col overflow-hidden shadow-2xl">
-            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Bell size={12} className="mr-1 text-blue-500"/> Segnali Recenti</h3>
-            <div className="overflow-y-auto space-y-1.5 pr-1 custom-scrollbar flex-1">
+          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col min-h-0 overflow-hidden">
+            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Bell size={12} className="mr-1 text-blue-500"/> Storico Segnali</h3>
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
               {signals.length === 0 ? (
-                <div className="text-center py-4 text-slate-600 text-[9px] italic uppercase tracking-tighter">Attesa dati...</div>
+                <div className="text-center py-6 text-slate-600 text-[9px] uppercase tracking-tighter italic">Analisi dati...</div>
               ) : (
                 signals.map((s, i) => (
-                  <div key={i} className={`p-2 rounded-lg border text-[10px] transition-all hover:bg-slate-800/50 ${
-                    s.stype === 'divergence' ? 'bg-purple-900/10 border-purple-800/30' : 
-                    s.stype === 'support' ? 'bg-blue-900/5 border-blue-800/20' : 'bg-green-900/5 border-green-800/20'
+                  <div key={i} className={`p-2 rounded-lg border text-[10px] ${
+                    s.stype === 'divergence' ? 'bg-purple-900/10 border-purple-800/20' : 'bg-slate-950/50 border-slate-800'
                   }`}>
-                    <div className="flex justify-between font-mono text-slate-500 scale-90 origin-left">
+                    <div className="flex justify-between font-mono text-slate-500 text-[8px] mb-0.5">
                       <span>{s.date}</span>
                       <span className="text-slate-300 font-bold">{s.price.toFixed(4)}</span>
                     </div>
-                    <p className={`font-bold mt-0.5 tracking-tight ${
+                    <p className={`font-bold leading-tight ${
                       s.stype === 'divergence' ? 'text-purple-400' : 
                       s.stype === 'support' ? 'text-blue-400' : 'text-green-400'
                     }`}>{s.msg}</p>
