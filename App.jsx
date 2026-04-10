@@ -74,7 +74,7 @@ export default function App() {
     }
   };
 
-  // Calcolo EMA (Exponential Moving Average) - Più reattiva della media semplice
+  // Calcolo EMA (Exponential Moving Average)
   const calculateEMA = (data, period) => {
     const k = 2 / (period + 1);
     let ema = [data[0].price];
@@ -84,33 +84,37 @@ export default function App() {
     return ema;
   };
 
-  // Algoritmo di analisi EMA + Filtro Volatilità
+  // Algoritmo di analisi EMA + Filtro Volatilità (CORRETTO)
   const analyzeTrend = (data, period, filter) => {
     if (data.length < period) return { ema: [], signalsList: [] };
     const ema = calculateEMA(data, period);
     const signalsList = [];
     let state = 0; // 1 per Up, -1 per Down
 
-    for (let i = 1; i < ema.length; i++) {
+    for (let i = 2; i < ema.length; i++) {
       const price = data[i].price;
-      const prevEma = ema[i - 1];
+      const prevPrice = data[i-1].price;
       const currEma = ema[i];
+      const prevEma = ema[i-1];
+      
       const slope = (currEma - prevEma) / prevEma * 100; // Pendenza in %
 
-      // Segnale SELL: Prezzo taglia sotto EMA e pendenza negativa > filtro
-      if (price < currEma && slope < -filter && state !== -1) {
+      // INIZIO FASE DISCENDENTE (SELL/ROSSO): 
+      // Il prezzo incrocia al ribasso la media E la pendenza conferma il calo
+      if (prevPrice >= prevEma && price < currEma && slope < -filter && state !== -1) {
         state = -1;
         signalsList.push({
           index: i, price, type: 'SELL', date: data[i].time.toLocaleDateString('it-IT'),
-          msg: "Inizio Trend Discendente"
+          msg: "Inizio fase discendente"
         });
       } 
-      // Segnale BUY: Prezzo taglia sopra EMA e pendenza positiva > filtro
-      else if (price > currEma && slope > filter && state !== 1) {
+      // FINE FASE DISCENDENTE (BUY/VERDE): 
+      // Il prezzo incrocia al rialzo la media E la pendenza conferma la ripresa
+      else if (prevPrice <= prevEma && price > currEma && slope > filter && state !== 1) {
         state = 1;
         signalsList.push({
           index: i, price, type: 'BUY', date: data[i].time.toLocaleDateString('it-IT'),
-          msg: "Inversione Rialzista Rilevata"
+          msg: "Fine fase discendente"
         });
       }
     }
