@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Activity, Bell, Settings, TrendingUp, Search, Loader2, 
-  Info, Target, Zap, ArrowUpRight, BarChart3, AlertTriangle, 
-  RefreshCw, Clock, TrendingDown, SplitSquareVertical, Timer
+  Target, Zap, BarChart3, AlertTriangle, RefreshCw, Clock, TrendingDown 
 } from 'lucide-react';
 
 export default function App() {
@@ -10,10 +9,6 @@ export default function App() {
   const rsiCanvasRef = useRef(null);
   const [chartData, setChartData] = useState([]); 
   const [signals, setSignals] = useState([]);
-  const [supportLevels, setSupportLevels] = useState([]); 
-  const [resistanceLevels, setResistanceLevels] = useState([]); 
-  const [midCycleLines, setMidCycleLines] = useState([]); 
-  const [avgCycleDuration, setAvgCycleDuration] = useState(0); // Durata media in candele
   const [rsiPeriod, setRsiPeriod] = useState(14);
   const [oversoldLimit, setOversoldLimit] = useState(35); 
   const [overboughtLimit, setOverboughtLimit] = useState(65); 
@@ -22,28 +17,8 @@ export default function App() {
   const [inputSymbol, setInputSymbol] = useState('EURUSD=X');
   const [timeframe, setTimeframe] = useState('1d'); 
   const [error, setError] = useState(null);
-  const [isSimulated, setIsSimulated] = useState(false);
 
-  const generateSimulatedData = (ticker) => {
-    const newData = [];
-    let currentPrice = ticker.toUpperCase().includes('BTC') ? 65000 : 1.09;
-    const today = new Date();
-    const points = timeframe === '1d' ? 260 : 300;
-    for (let i = 0; i < points; i++) {
-      const macro = Math.sin(i / 30) * (currentPrice * 0.1) + Math.cos(i / 50) * (currentPrice * 0.05);
-      const noise = (Math.random() - 0.5) * (currentPrice * 0.015);
-      const price = currentPrice + macro + noise;
-      const d = new Date(today); 
-      if (timeframe === '1d') d.setDate(today.getDate() - (points - i));
-      else d.setHours(today.getHours() - (points - i));
-      newData.push({ price: Math.max(price, 0.01), time: d });
-    }
-    setChartData(newData);
-    setSymbol(ticker.toUpperCase() + ' (Simulato)');
-    setIsSimulated(true);
-    setError("Utilizzo dati simulati causa timeout server.");
-  };
-
+  // Calcolo RSI (Relative Strength Index)
   const calculateRSI = (data, period) => {
     let rsi = new Array(data.length).fill(null);
     if (data.length < period + 1) return rsi;
@@ -64,98 +39,58 @@ export default function App() {
     return rsi;
   };
 
-  // Algoritmo V9 con Proiezione Temporale
-  const analyzeCyclesV9 = (data, rsiValues, lowThresh, highThresh) => {
-    if (data.length < 20) return { signalsList: [], supports: [], resistances: [], midLines: [], avgDur: 0 };
+  // Algoritmo Pure Signals: Solo minimi, massimi e divergenze
+  const analyzePureCycles = (data, rsiValues, lowThresh, highThresh) => {
+    if (data.length < 20) return [];
     const signalsList = [];
-    const supports = [];
-    const resistances = [];
-    const midLines = [];
-    const buyIndices = [];
     
-    // Passo 1: Trova tutti i Buy (Inizi Ciclo)
     for (let i = 10; i < data.length - 1; i++) {
       const p1 = data[i-1].price;
       const p0 = data[i].price;
       const rsi1 = rsiValues[i-1];
-      let foundBuy = false;
+      let signal = null;
 
-      // Divergenza o Supporto o Oversold
-      const isDivergence = (() => {
-        for (let prev = i - 5; prev > i - 40; prev--) {
-          if (data[prev] && data[prev-1] && data[prev].price < data[prev-1].price && data[prev].price < data[prev+1].price) {
-            if (data[i-1].price <= data[prev].price && rsiValues[i-1] > rsiValues[prev] && rsiValues[i-1] < 45) return true;
+      // --- RILEVAMENTO BUY (Minimi) ---
+      let isDivBuy = false;
+      for (let prev = i - 5; prev > i - 40; prev--) {
+        if (data[prev] && data[prev-1] && data[prev].price < data[prev-1].price && data[prev].price < data[prev+1].price) {
+          if (data[i-1].price <= data[prev].price && rsiValues[i-1] > rsiValues[prev] && rsiValues[i-1] < 45) {
+             if (p0 > p1) { isDivBuy = true; break; }
           }
         }
-        return false;
-      })();
-
-      const isSupport = supports.some(l => Math.abs(p1 - l.price)/l.price < 0.0022);
-      const isOversold = rsi1 < lowThresh;
-
-      if ((isDivergence || isSupport || isOversold) && p0 > p1) {
-        foundBuy = true;
-        buyIndices.push(i - 1);
-        signalsList.push({ index: i - 1, price: p1, type: 'BUY', stype: isDivergence ? 'divergence' : (isSupport ? 'support' : 'standard'), 
-          msg: isDivergence ? "Inizio Ciclo (Divergenza)" : "Inizio Ciclo Rialzista", 
-          date: data[i-1].time.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })});
-        if (!supports.some(s => Math.abs(s.price - p1)/p1 < 0.004)) supports.push({price: p1, index: i-1});
       }
-    }
 
-    // Passo 2: Calcola durata media
-    let avgDur = 0;
-    if (buyIndices.length >= 2) {
-      let sum = 0;
-      for (let k = 1; k < buyIndices.length; k++) sum += (buyIndices[k] - buyIndices[k-1]);
-      avgDur = Math.floor(sum / (buyIndices.length - 1));
-    } else {
-      avgDur = timeframe === '1d' ? 40 : 60; // Default statistico se pochi dati
-    }
+      if (isDivBuy) {
+        signal = { type: 'BUY', stype: 'divergence', msg: "Divergenza Rialzista" };
+      } else if (rsi1 < lowThresh && p0 > p1) {
+        signal = { type: 'BUY', stype: 'standard', msg: "Inizio Ciclo Rialzista" };
+      }
 
-    // Passo 3: Identifica Giro di Boa con filtro temporale (Regola del 40%)
-    let lastBuyIdx = -1;
-    for (let i = 10; i < data.length - 1; i++) {
-      const p1 = data[i-1].price;
-      const p0 = data[i].price;
-      const rsi1 = rsiValues[i-1];
-      
-      if (buyIndices.includes(i-1)) lastBuyIdx = i - 1;
-
-      // Solo se non è un buy, cerchiamo un sell
-      if (!buyIndices.includes(i-1) && lastBuyIdx !== -1) {
-        const candlesFromStart = i - 1 - lastBuyIdx;
-        const isDivergenceSell = (() => {
-          for (let prev = i - 5; prev > i - 40; prev--) {
-            if (data[prev] && data[prev-1] && data[prev].price > data[prev-1].price && data[prev].price > data[prev+1].price) {
-              if (data[i-1].price >= data[prev].price && rsiValues[i-1] < rsiValues[prev] && rsiValues[i-1] > 55) return true;
+      // --- RILEVAMENTO SELL (Massimi) ---
+      if (!signal) {
+        let isDivSell = false;
+        for (let prev = i - 5; prev > i - 40; prev--) {
+          if (data[prev] && data[prev-1] && data[prev].price > data[prev-1].price && data[prev].price > data[prev+1].price) {
+            if (data[i-1].price >= data[prev].price && rsiValues[i-1] < rsiValues[prev] && rsiValues[i-1] > 55) {
+               if (p0 < p1) { isDivSell = true; break; }
             }
           }
-          return false;
-        })();
-
-        const isRes = resistances.some(l => Math.abs(p1 - l.price)/l.price < 0.0022);
-        const isOverbought = rsi1 > highThresh;
-
-        if ((isDivergenceSell || isRes || isOverbought) && p0 < p1) {
-          // FILTRO TEMPORALE: Una metà ciclo non può avvenire troppo presto (es < 35% della durata media)
-          const minWait = avgDur * 0.35;
-          const isMidPoint = candlesFromStart >= minWait && !midLines.some(m => m.index > lastBuyIdx);
-
-          if (isMidPoint) {
-            midLines.push({ index: i - 1, price: p1 });
-            signalsList.push({ index: i - 1, price: p1, type: 'SELL', isBoa: true, stype: 'standard', msg: "GIRO DI BOA (Tempo Statistico)", 
-              date: data[i-1].time.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })});
-          } else {
-            signalsList.push({ index: i - 1, price: p1, type: 'SELL', isBoa: false, stype: 'standard', msg: "Ritracciamento Interno", 
-              date: data[i-1].time.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })});
-          }
-          if (!resistances.some(s => Math.abs(s.price - p1)/p1 < 0.004)) resistances.push({price: p1, index: i-1});
+        }
+        if (isDivSell) {
+          signal = { type: 'SELL', stype: 'divergence', msg: "Divergenza Ribassista" };
+        } else if (rsi1 > highThresh && p0 < p1) {
+          signal = { type: 'SELL', stype: 'standard', msg: "Massimo Ciclico" };
         }
       }
-    }
 
-    return { signalsList, supports, resistances, midLines, avgDur };
+      if (signal) {
+        signalsList.push({
+          ...signal, index: i - 1, price: p1,
+          date: data[i-1].time.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+        });
+      }
+    }
+    return signalsList;
   };
 
   const fetchYahooData = async (ticker) => {
@@ -164,7 +99,6 @@ export default function App() {
     const interval = timeframe === '1d' ? '1d' : '60m';
     try {
       const t = ticker.toUpperCase();
-      const directUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=${interval}&range=${range}`;
       const proxy = `/api/yahoo/${t}?interval=${interval}&range=${range}`;
       const res = await fetch(proxy);
       if (!res.ok) throw new Error();
@@ -174,22 +108,28 @@ export default function App() {
         price: result.indicators.quote[0].close[i], time: new Date(ts * 1000)
       })).filter(d => d.price != null);
       setChartData(prices); setSymbol(t);
-    } catch (e) { generateSimulatedData(ticker); } 
-    finally { setIsLoading(false); }
+    } catch (e) { 
+      setError("Impossibile caricare dati reali. Verifica vercel.json.");
+      setIsLoading(false);
+    } finally { setIsLoading(false); }
   };
 
   useEffect(() => {
     if (chartData.length === 0) return;
     const rsi = calculateRSI(chartData, rsiPeriod);
-    const { signalsList, supports, resistances, midLines, avgDur } = analyzeCyclesV9(chartData, rsi, oversoldLimit, overboughtLimit);
-    setSignals([...signalsList].sort((a,b) => b.index - a.index));
-    setSupportLevels(supports); setResistanceLevels(resistances); setMidCycleLines(midLines); setAvgCycleDuration(avgDur);
+    const signalsList = analyzePureCycles(chartData, rsi, oversoldLimit, overboughtLimit);
+    setSignals([...signalsList].reverse());
 
     const draw = () => {
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      const rsiCanvas = rsiCanvasRef.current;
+      if (!canvas || !rsiCanvas) return;
       const ctx = canvas.getContext('2d');
+      const rCtx = rsiCanvas.getContext('2d');
+      
       canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+      rsiCanvas.width = rsiCanvas.clientWidth; rsiCanvas.height = rsiCanvas.clientHeight;
+      
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const prices = chartData.map(d => d.price);
       const minP = Math.min(...prices); const maxP = Math.max(...prices);
@@ -197,44 +137,34 @@ export default function App() {
       const getX = (i) => (i / (chartData.length - 1)) * canvas.width;
       const getY = (v) => canvas.height - ((v - (minP - padding)) / range) * canvas.height;
 
-      // 1. Proiezione Prossimo Minimo (Zona Sfumata)
-      const lastBuy = signalsList.find(s => s.type === 'BUY');
-      if (lastBuy && avgDur > 0) {
-        const projectedIdx = lastBuy.index + avgDur;
-        const xProj = getX(projectedIdx);
-        const grad = ctx.createLinearGradient(xProj - 20, 0, xProj + 20, 0);
-        grad.addColorStop(0, 'rgba(34, 197, 94, 0)');
-        grad.addColorStop(0.5, 'rgba(34, 197, 94, 0.1)');
-        grad.addColorStop(1, 'rgba(34, 197, 94, 0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(xProj - 30, 0, 60, canvas.height);
-        
-        ctx.setLineDash([2, 4]); ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
-        ctx.beginPath(); ctx.moveTo(xProj, 0); ctx.lineTo(xProj, canvas.height); ctx.stroke();
-      }
-
-      // 2. Linee Verticali Arancioni (Boa)
-      ctx.setLineDash([10, 10]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(249, 115, 22, 0.4)';
-      midLines.forEach(m => { ctx.beginPath(); ctx.moveTo(getX(m.index), 0); ctx.lineTo(getX(m.index), canvas.height); ctx.stroke(); });
-
-      // 3. Griglie Orizzontali
-      ctx.setLineDash([6, 4]); ctx.lineWidth = 1;
-      supports.forEach(s => { ctx.strokeStyle = 'rgba(34, 197, 94, 0.1)'; ctx.beginPath(); ctx.moveTo(getX(s.index), getY(s.price)); ctx.lineTo(canvas.width, getY(s.price)); ctx.stroke(); });
-      resistances.forEach(s => { ctx.strokeStyle = 'rgba(239, 68, 68, 0.1)'; ctx.beginPath(); ctx.moveTo(getX(s.index), getY(s.price)); ctx.lineTo(canvas.width, getY(s.price)); ctx.stroke(); });
-      ctx.setLineDash([]);
-
-      // 4. Prezzo
+      // Linea Prezzo Blu
       ctx.beginPath(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2;
       chartData.forEach((d, i) => i === 0 ? ctx.moveTo(getX(i), getY(d.price)) : ctx.lineTo(getX(i), getY(d.price)));
       ctx.stroke();
 
-      // 5. Segnali
+      // Pallini Segnale (Senza linee tratteggiate)
       signalsList.forEach(s => {
-        const x = getX(s.index), y = getY(s.price);
-        ctx.fillStyle = s.type === 'BUY' ? (s.stype === 'divergence' ? '#a855f7' : '#22c55e') : (s.isBoa ? '#f97316' : '#ef4444');
-        ctx.beginPath(); ctx.arc(x, y, s.isBoa ? 6 : 4, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.stroke();
+        const x = getX(s.index); const y = getY(s.price);
+        ctx.fillStyle = s.type === 'BUY' ? (s.stype === 'divergence' ? '#a855f7' : '#22c55e') : (s.stype === 'divergence' ? '#ef4444' : '#f87171');
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
       });
+
+      // RSI Rendering (Potenziato)
+      rCtx.clearRect(0, 0, rsiCanvas.width, rsiCanvas.height);
+      rCtx.strokeStyle = 'rgba(255,255,255,0.05)';
+      [30, 70].forEach(l => {
+        const y = rsiCanvas.height - (l/100) * rsiCanvas.height;
+        rCtx.beginPath(); rCtx.moveTo(0, y); rCtx.lineTo(rsiCanvas.width, y); rCtx.stroke();
+      });
+      rCtx.beginPath(); rCtx.strokeStyle = '#a855f7'; rCtx.lineWidth = 2;
+      rsi.forEach((v, i) => {
+        if (v === null) return;
+        const x = (i / (rsi.length - 1)) * rsiCanvas.width;
+        const y = rsiCanvas.height - (v / 100) * rsiCanvas.height;
+        i === 0 ? rCtx.moveTo(x, y) : rCtx.lineTo(x, y);
+      });
+      rCtx.stroke();
     };
     const timer = setTimeout(draw, 100);
     window.addEventListener('resize', draw);
@@ -247,8 +177,8 @@ export default function App() {
     <div className="fixed inset-0 bg-slate-950 text-slate-200 p-3 md:p-4 font-sans flex flex-col overflow-hidden">
       <header className="flex justify-between items-center mb-3 h-10 border-b border-slate-800 shrink-0">
         <div className="flex items-center space-x-2">
-          <Timer className="text-blue-400" size={18} />
-          <h1 className="text-md font-black tracking-tighter uppercase italic">CycleMaster <span className="text-blue-500 text-[9px] not-italic font-bold">V9 TIME PROJECTION</span></h1>
+          <Zap className="text-yellow-500 fill-yellow-500" size={18} />
+          <h1 className="text-md font-black tracking-tighter uppercase italic">CycleMaster <span className="text-blue-500 text-[9px] not-italic font-bold">V7 CLEAN</span></h1>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex bg-slate-900 rounded-md p-0.5 border border-slate-700">
@@ -256,8 +186,8 @@ export default function App() {
             <button onClick={() => setTimeframe('1h')} className={`px-3 py-1 text-[10px] font-bold rounded ${timeframe === '1h' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>1H</button>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); fetchYahooData(inputSymbol); }} className="flex">
-            <input className="bg-slate-900 border border-slate-700 px-2 py-1 rounded-l-md outline-none focus:border-blue-500 text-xs w-24 md:w-40 text-white" value={inputSymbol} onChange={e => setInputSymbol(e.target.value.toUpperCase())} />
-            <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700"><Search size={14} /></button>
+            <input className="bg-slate-900 border border-slate-700 px-2 py-1 rounded-l-md outline-none focus:border-blue-500 text-xs w-24 md:w-40 text-white" value={inputSymbol} onChange={e => setInputSymbol(e.target.value)} />
+            <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700 transition-colors"><Search size={14} /></button>
           </form>
         </div>
       </header>
@@ -266,21 +196,25 @@ export default function App() {
         <div className="flex-[3] flex flex-col gap-3 min-h-0">
           <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl relative min-h-0">
              <div className="flex justify-between items-center mb-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{symbol} <span className="text-blue-500 ml-1">Avg Cycle: {avgCycleDuration} bars</span></span>
-                <div className="flex gap-3 text-[8px] font-bold uppercase">
-                   <span className="flex items-center text-green-500/50"><div className="w-1.5 h-1.5 bg-green-500/20 border border-green-500 rounded mr-1"></div> Prossimo Minimo</span>
-                   <span className="flex items-center text-orange-400"><div className="w-1.5 h-1.5 bg-orange-500 rounded-full mr-1"></div> Metà Ciclo</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{symbol} <span className="text-blue-500 ml-1">[{timeframe.toUpperCase()}]</span></span>
+                <div className="flex gap-4 text-[8px] font-bold uppercase">
+                   <span className="flex items-center text-purple-400"><div className="w-1.5 h-1.5 bg-purple-500 rounded-full mr-1"></div> Divergenza</span>
+                   <span className="flex items-center text-red-400"><div className="w-1.5 h-1.5 bg-red-400 rounded-full mr-1"></div> Massimo</span>
+                   <span className="flex items-center text-green-400"><div className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1"></div> Minimo</span>
                 </div>
              </div>
              <div className="w-full h-[calc(100%-25px)] bg-slate-950 rounded border border-slate-800/50">
                 <canvas ref={canvasRef} className="w-full h-full" />
-                {isLoading && <div className="absolute inset-0 flex items-center justify-center bg-slate-950/50"><Loader2 className="animate-spin text-blue-500" size={24} /></div>}
+                {isLoading && <div className="absolute inset-0 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm"><Loader2 className="animate-spin text-blue-500" size={24} /></div>}
              </div>
+          </div>
+          <div className="h-16 bg-slate-900 border border-slate-800 rounded-xl p-2 shrink-0">
+             <canvas ref={rsiCanvasRef} className="w-full h-full bg-slate-950 rounded" />
           </div>
         </div>
 
         <div className="flex-1 flex flex-col gap-3 min-h-0 lg:w-72">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shrink-0 shadow-lg">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shrink-0">
             <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Settings size={12} className="mr-1"/> Configurazione</h3>
             <div className="space-y-3">
               <input type="range" min="20" max="45" value={oversoldLimit} onChange={e => setOversoldLimit(Number(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg accent-green-500 cursor-pointer" />
@@ -288,23 +222,24 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col min-h-0 overflow-hidden shadow-2xl font-sans">
-            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><SplitSquareVertical size={12} className="mr-1 text-blue-500"/> Analisi Fasi</h3>
+          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col min-h-0 overflow-hidden shadow-2xl">
+            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Bell size={12} className="mr-1 text-blue-500"/> Storico Segnali</h3>
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
               {signals.length === 0 ? (
-                <div className="text-center py-6 text-slate-600 text-[9px] uppercase italic">In attesa di dati...</div>
+                <div className="text-center py-6 text-slate-600 text-[9px] uppercase tracking-tighter italic">Analisi...</div>
               ) : (
                 signals.map((s, i) => (
-                  <div key={i} className={`p-1.5 rounded border text-[9px] ${
-                    s.isBoa ? 'bg-orange-950/30 border-orange-500/50' :
-                    (s.type === 'SELL' ? 'bg-red-950/20 border-red-900/30' : 'bg-green-950/20 border-green-800/30')
+                  <div key={i} className={`p-1.5 rounded-lg border text-[9px] ${
+                    s.type === 'SELL' ? 'bg-red-950/20 border-red-900/30' : 
+                    (s.stype === 'divergence' ? 'bg-purple-900/10 border-purple-800/20' : 'bg-green-950/20 border-green-800/20')
                   }`}>
                     <div className="flex justify-between font-mono text-slate-500 text-[7px] mb-0.5">
                       <span>{s.date}</span>
                       <span className="text-slate-300 font-bold">{s.price.toFixed(4)}</span>
                     </div>
                     <p className={`font-bold leading-tight ${
-                      s.isBoa ? 'text-orange-400' : (s.type === 'SELL' ? 'text-red-400' : 'text-green-400')
+                      s.type === 'SELL' ? 'text-red-400' : 
+                      (s.stype === 'divergence' ? 'text-purple-400' : 'text-green-400')
                     }`}>{s.msg}</p>
                   </div>
                 ))
