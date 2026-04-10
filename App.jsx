@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, Bell, Settings, TrendingUp, Search, Loader2, Info, Target, Zap, ArrowUpRight, BarChart3, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Activity, Bell, Settings, TrendingUp, Search, Loader2, Info, Target, Zap, ArrowUpRight, BarChart3, AlertTriangle, RefreshCw, Clock } from 'lucide-react';
 
 export default function App() {
   const canvasRef = useRef(null);
@@ -12,20 +12,24 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [symbol, setSymbol] = useState('EURUSD=X'); 
   const [inputSymbol, setInputSymbol] = useState('EURUSD=X');
+  const [timeframe, setTimeframe] = useState('1d'); // '1d' o '1h'
   const [error, setError] = useState(null);
   const [isSimulated, setIsSimulated] = useState(false);
 
-  // Generatore di dati simulati per evitare lo schermo vuoto
+  // Generatore di dati simulati se i server reali sono bloccati
   const generateSimulatedData = (ticker) => {
     const newData = [];
     let currentPrice = ticker.toUpperCase().includes('BTC') ? 65000 : 
                        ticker.toUpperCase().includes('EUR') ? 1.09 : 150;
     const today = new Date();
-    for (let i = 0; i < 260; i++) {
+    const points = timeframe === '1d' ? 260 : 300;
+    for (let i = 0; i < points; i++) {
       const macro = Math.sin(i / 25) * (currentPrice * 0.08) + Math.cos(i / 60) * (currentPrice * 0.12);
       const noise = (Math.random() - 0.5) * (currentPrice * 0.015);
       const price = currentPrice + macro + noise;
-      const d = new Date(today); d.setDate(today.getDate() - (260 - i));
+      const d = new Date(today); 
+      if (timeframe === '1d') d.setDate(today.getDate() - (points - i));
+      else d.setHours(today.getHours() - (points - i));
       newData.push({ price: Math.max(price, 0.01), time: d });
     }
     setChartData(newData);
@@ -67,6 +71,7 @@ export default function App() {
       let signalType = "standard";
       let msg = "";
 
+      // Logica Divergenza (Pallino Viola)
       for (let prev = i - 5; prev > i - 40; prev--) {
         if (data[prev] && data[prev-1] && data[prev].price < data[prev-1].price && data[prev].price < data[prev+1].price) {
           if (data[i-1].price <= data[prev].price && rsiValues[i-1] > rsiValues[prev] && rsiValues[i-1] < 45) {
@@ -78,6 +83,7 @@ export default function App() {
         }
       }
 
+      // Supporto Ciclico (Linee tratteggiate)
       if (!isBuySignal) {
         supports.forEach(level => {
           const diff = Math.abs(p1 - level.price) / level.price;
@@ -87,6 +93,7 @@ export default function App() {
         });
       }
 
+      // Ipervenduto standard (Pallino Verde)
       if (!isBuySignal && rsi1 < threshold && p0 > p1) {
         isBuySignal = true; signalType = "standard"; msg = "Inizio Ciclo";
       }
@@ -94,7 +101,8 @@ export default function App() {
       if (isBuySignal) {
         signalsList.push({
           index: i - 1, price: p1, type: 'BUY', stype: signalType,
-          date: data[i-1].time.toLocaleDateString('it-IT'), msg
+          date: data[i-1].time.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }), 
+          msg
         });
         if (!supports.some(s => Math.abs(s.price - p1) / p1 < 0.004)) {
           supports.push({ price: p1, index: i - 1 });
@@ -106,14 +114,20 @@ export default function App() {
 
   const fetchYahooData = async (ticker) => {
     setIsLoading(true); setError(null); setIsSimulated(false);
+    
+    // Configura i parametri in base al timeframe scelto
+    const range = timeframe === '1d' ? '1y' : '1mo';
+    const interval = timeframe === '1d' ? '1d' : '60m';
+
     const timeout = setTimeout(() => {
       if (isLoading && chartData.length === 0) { generateSimulatedData(ticker); setIsLoading(false); }
     }, 5000);
 
     try {
       const t = ticker.toUpperCase();
-      const directUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`;
-      const proxies = [`/api/yahoo/${t}?interval=1d&range=1y`, `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}` ];
+      const directUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=${interval}&range=${range}`;
+      const proxies = [`/api/yahoo/${t}?interval=${interval}&range=${range}`, `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}` ];
+      
       let json = null; let success = false;
       for (const p of proxies) {
         try {
@@ -196,28 +210,43 @@ export default function App() {
     const timer = setTimeout(draw, 100);
     window.addEventListener('resize', draw);
     return () => { clearTimeout(timer); window.removeEventListener('resize', draw); };
-  }, [chartData, oversoldLimit]);
+  }, [chartData, oversoldLimit, timeframe]);
 
-  useEffect(() => { fetchYahooData('EURUSD=X'); }, []);
+  useEffect(() => { fetchYahooData(inputSymbol); }, [timeframe]);
 
   return (
     <div className="fixed inset-0 bg-slate-950 text-slate-200 p-3 md:p-4 font-sans flex flex-col overflow-hidden">
       <header className="flex justify-between items-center mb-3 h-10 border-b border-slate-800 shrink-0">
         <div className="flex items-center space-x-2">
           <Zap className="text-yellow-500 fill-yellow-500" size={18} />
-          <h1 className="text-md font-black tracking-tighter uppercase italic">CycleMaster <span className="text-blue-500 text-[9px] not-italic font-bold">V5.1</span></h1>
+          <h1 className="text-md font-black tracking-tighter uppercase italic">CycleMaster <span className="text-blue-500 text-[9px] not-italic font-bold">V6 PRO</span></h1>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); fetchYahooData(inputSymbol); }} className="flex">
-          <input className="bg-slate-900 border border-slate-700 px-2 py-1 rounded-l-md outline-none focus:border-blue-500 text-xs w-24 md:w-40 text-white" value={inputSymbol} onChange={e => setInputSymbol(e.target.value)} />
-          <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700 transition-colors"><Search size={14} /></button>
-        </form>
+        
+        <div className="flex items-center gap-3">
+          {/* Selettore Timeframe */}
+          <div className="flex bg-slate-900 rounded-md p-0.5 border border-slate-700">
+            <button 
+              onClick={() => setTimeframe('1d')}
+              className={`px-3 py-1 text-[10px] font-bold rounded transition-all ${timeframe === '1d' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+            >1G</button>
+            <button 
+              onClick={() => setTimeframe('1h')}
+              className={`px-3 py-1 text-[10px] font-bold rounded transition-all ${timeframe === '1h' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+            >1H</button>
+          </div>
+
+          <form onSubmit={(e) => { e.preventDefault(); fetchYahooData(inputSymbol); }} className="flex">
+            <input className="bg-slate-900 border border-slate-700 px-2 py-1 rounded-l-md outline-none focus:border-blue-500 text-xs w-24 md:w-40 text-white" value={inputSymbol} onChange={e => setInputSymbol(e.target.value)} />
+            <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700 transition-colors"><Search size={14} /></button>
+          </form>
+        </div>
       </header>
 
       <div className="flex-1 flex flex-col lg:flex-row gap-3 min-h-0 overflow-hidden">
         <div className="flex-[3] flex flex-col gap-3 min-h-0">
           <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl relative min-h-0">
              <div className="flex justify-between items-center mb-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{symbol}</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{symbol} <span className="text-blue-500 ml-1">[{timeframe.toUpperCase()}]</span></span>
                 <div className="flex gap-4 text-[8px] font-bold uppercase">
                    <span className="flex items-center text-purple-400"><div className="w-1.5 h-1.5 bg-purple-500 rounded-full mr-1"></div> Divergenza</span>
                    <span className="flex items-center text-green-400"><div className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1"></div> Supporto</span>
@@ -228,7 +257,7 @@ export default function App() {
              </div>
           </div>
           <div className="h-20 bg-slate-900 border border-slate-800 rounded-xl p-2 shrink-0">
-             <div className="text-[8px] font-bold text-slate-500 mb-1 uppercase">RSI Strength</div>
+             <div className="text-[8px] font-bold text-slate-500 mb-1 uppercase">RSI Strength (Intraday Ready)</div>
              <canvas ref={rsiCanvasRef} className="w-full h-[calc(100%-12px)] bg-slate-950 rounded" />
           </div>
         </div>
@@ -242,10 +271,12 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col min-h-0 overflow-hidden">
-            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Bell size={12} className="mr-1 text-blue-500"/> Storico Segnali</h3>
+          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col min-h-0 overflow-hidden shadow-2xl">
+            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Clock size={12} className="mr-1 text-blue-500"/> Segnali {timeframe === '1h' ? 'Intraday' : 'Daily'}</h3>
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
-              {signals.length === 0 ? (
+              {isLoading ? (
+                <div className="flex items-center justify-center py-10"><Loader2 className="animate-spin text-blue-500" size={20}/></div>
+              ) : signals.length === 0 ? (
                 <div className="text-center py-6 text-slate-600 text-[9px] uppercase tracking-tighter italic">Analisi dati...</div>
               ) : (
                 signals.map((s, i) => (
