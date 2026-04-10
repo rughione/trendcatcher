@@ -17,10 +17,11 @@ export default function App() {
   const [error, setError] = useState(null);
   const [isSimulated, setIsSimulated] = useState(false);
 
-  // Genera dati simulati realistici se i proxy falliscono
+  // Genera dati simulati se i server reali sono bloccati
   const generateSimulatedData = (ticker) => {
     const newData = [];
-    let currentPrice = ticker.includes('BTC') ? 65000 : ticker.includes('EUR') ? 1.09 : 150;
+    let currentPrice = ticker.toUpperCase().includes('BTC') ? 65000 : 
+                       ticker.toUpperCase().includes('EUR') ? 1.09 : 150;
     const today = new Date();
     for (let i = 0; i < 260; i++) {
       const macro = Math.sin(i / 25) * (currentPrice * 0.08) + Math.cos(i / 60) * (currentPrice * 0.12);
@@ -32,7 +33,7 @@ export default function App() {
     setChartData(newData);
     setSymbol(ticker.toUpperCase() + ' (Simulato)');
     setIsSimulated(true);
-    setError("I server Yahoo non rispondono. Modalità simulata attivata per testare i cicli.");
+    setError("I server Yahoo non rispondono o il proxy è saturo. Modalità simulata attiva.");
   };
 
   // Calcolo RSI (Relative Strength Index)
@@ -56,7 +57,7 @@ export default function App() {
     return rsi;
   };
 
-  // Algoritmo CycleMaster V5: Cicli, Supporti e Divergenze
+  // Algoritmo di analisi ciclica e divergenze
   const analyzeCyclesV5 = (data, rsiValues, threshold) => {
     if (data.length < 15) return { signalsList: [], supports: [], targets: [] };
     const signalsList = [];
@@ -68,7 +69,7 @@ export default function App() {
       const p0 = data[i].price;
       const rsi1 = rsiValues[i-1];
 
-      // Identificazione Target
+      // Target (Resistenze precedenti)
       if (data[i-1].price > data[i-2].price && data[i-1].price > data[i].price) {
         if (!targets.some(t => Math.abs(t.price - data[i-1].price) / t.price < 0.003)) {
           targets.push({ price: data[i-1].price, index: i-1 });
@@ -79,7 +80,7 @@ export default function App() {
       let signalType = "standard";
       let msg = "";
 
-      // Divergenza Rialzista
+      // Divergenza Rialzista (Prezzo cala, RSI sale)
       for (let prev = i - 5; prev > i - 40; prev--) {
         if (data[prev] && data[prev-1] && data[prev].price < data[prev-1].price && data[prev].price < data[prev+1].price) {
           if (data[i-1].price <= data[prev].price && rsiValues[i-1] > rsiValues[prev] && rsiValues[i-1] < 45) {
@@ -93,7 +94,7 @@ export default function App() {
         }
       }
 
-      // Supporto Ciclico
+      // Rimbalzo su supporto storico
       if (!isBuySignal) {
         supports.forEach(level => {
           const diff = Math.abs(p1 - level.price) / level.price;
@@ -105,7 +106,7 @@ export default function App() {
         });
       }
 
-      // RSI Ipervenduto
+      // Ipervenduto standard
       if (!isBuySignal && rsi1 < threshold && p0 > p1) {
         isBuySignal = true;
         signalType = "standard";
@@ -128,13 +129,13 @@ export default function App() {
   const fetchYahooData = async (ticker) => {
     setIsLoading(true); setError(null); setIsSimulated(false);
     
-    // Timeout di sicurezza per forzare i dati simulati se i proxy sono troppo lenti
+    // Timer di emergenza per forzare i dati simulati se i server sono bloccati
     const timeout = setTimeout(() => {
       if (isLoading && chartData.length === 0) {
         generateSimulatedData(ticker);
         setIsLoading(false);
       }
-    }, 6000);
+    }, 5000);
 
     try {
       const t = ticker.toUpperCase();
@@ -193,7 +194,6 @@ export default function App() {
     setSupportLevels(supports);
     setTargetLevels(targets);
 
-    // Funzione interna per il disegno sicura
     const draw = () => {
       const canvas = canvasRef.current;
       const rsiCanvas = rsiCanvasRef.current;
@@ -214,20 +214,20 @@ export default function App() {
       const getX = (i) => (i / (chartData.length - 1)) * width;
       const getY = (v) => height - ((v - (minP - padding)) / range) * height;
 
-      // Disegno Supporti
+      // Disegno Supporti Verdi
       ctx.setLineDash([6, 4]);
       supports.forEach(s => {
-        ctx.strokeStyle = 'rgba(34, 197, 94, 0.2)';
+        ctx.strokeStyle = 'rgba(34, 197, 94, 0.25)';
         ctx.beginPath(); ctx.moveTo(getX(s.index), getY(s.price)); ctx.lineTo(width, getY(s.price)); ctx.stroke();
       });
       ctx.setLineDash([]);
 
-      // Prezzo
+      // Prezzo (Linea Blu)
       ctx.beginPath(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2.5;
       chartData.forEach((d, i) => i === 0 ? ctx.moveTo(getX(i), getY(d.price)) : ctx.lineTo(getX(i), getY(d.price)));
       ctx.stroke();
 
-      // Segnali
+      // Segnali (Pallini)
       signalsList.forEach(s => {
         const x = getX(s.index); const y = getY(s.price);
         ctx.fillStyle = s.stype === 'divergence' ? '#a855f7' : '#22c55e';
@@ -239,7 +239,7 @@ export default function App() {
         }
       });
 
-      // Disegno RSI
+      // Disegno RSI (Viola)
       rCtx.clearRect(0, 0, rsiCanvas.width, rsiCanvas.height);
       rCtx.strokeStyle = '#334155'; rCtx.beginPath();
       rCtx.moveTo(0, rsiCanvas.height * 0.3); rCtx.lineTo(rsiCanvas.width, rsiCanvas.height * 0.3);
@@ -256,7 +256,6 @@ export default function App() {
       rCtx.stroke();
     };
 
-    // Eseguiamo il disegno dopo un piccolo delay per assicurarci che i canvas siano montati
     const timer = setTimeout(draw, 50);
     return () => clearTimeout(timer);
   }, [chartData, rsiPeriod, oversoldLimit]);
@@ -273,7 +272,11 @@ export default function App() {
           <h1 className="text-xl font-black tracking-tighter uppercase italic">CycleMaster <span className="text-blue-500 text-xs not-italic">V5 ULTIMATE</span></h1>
         </div>
         <form onSubmit={(e) => { e.preventDefault(); fetchYahooData(inputSymbol); }} className="flex">
-          <input className="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-l-md outline-none focus:border-blue-500 text-sm w-32 md:w-48 text-white" value={inputSymbol} onChange={e => setInputSymbol(e.target.value.toUpperCase())} />
+          <input 
+            className="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-l-md outline-none focus:border-blue-500 text-sm w-32 md:w-48 text-white" 
+            value={inputSymbol} 
+            onChange={e => setInputSymbol(e.target.value.toUpperCase())} 
+          />
           <button className="bg-blue-600 px-4 py-1.5 rounded-r-md hover:bg-blue-700 shadow-lg shadow-blue-900/20"><Search size={18} /></button>
         </form>
       </header>
@@ -288,23 +291,23 @@ export default function App() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 overflow-hidden">
         <div className="lg:col-span-3 space-y-4 flex flex-col overflow-hidden">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl relative flex-1 min-h-[400px]">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex justify-between items-center mb-4 text-white">
               <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">{symbol} - Analisi Ciclica</h2>
               <div className="flex space-x-4 text-[9px] font-bold">
-                <span className="flex items-center text-purple-400"><div className="w-2 h-2 bg-purple-500 rounded-full mr-1 shadow-[0_0_8px_rgba(168,85,247,0.8)]"></div> Divergenza</span>
+                <span className="flex items-center text-purple-400"><div className="w-2 h-2 bg-purple-500 rounded-full mr-1"></div> Divergenza</span>
                 <span className="flex items-center text-green-400"><div className="w-2 h-2 bg-green-500 rounded-full mr-1"></div> Supporto</span>
               </div>
             </div>
-            <div className="relative w-full h-[calc(100%-40px)] bg-slate-950 rounded-xl overflow-hidden border border-slate-800/50">
+            <div className="relative w-full h-[calc(100%-40px)] bg-slate-950 rounded-xl overflow-hidden border border-slate-800/50 shadow-inner">
               <canvas ref={canvasRef} width={1200} height={500} className="w-full h-full" />
               {isLoading && chartData.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80">
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm">
                   <Loader2 className="animate-spin text-blue-500" size={32} />
                 </div>
               )}
             </div>
           </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 h-32">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 h-32 shadow-xl">
             <h2 className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest flex items-center">
               <BarChart3 size={12} className="mr-1" /> Oscillatore RSI
             </h2>
@@ -316,16 +319,16 @@ export default function App() {
 
         <div className="space-y-4 flex flex-col h-full overflow-hidden">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
-            <h3 className="text-xs font-bold text-slate-400 mb-4 flex items-center uppercase"><Settings size={14} className="mr-2"/> Setup</h3>
+            <h3 className="text-xs font-bold text-slate-400 mb-4 flex items-center uppercase"><Settings size={14} className="mr-2"/> Configurazione</h3>
             <div className="space-y-4">
               <div>
-                <label className="text-[10px] block mb-1 text-slate-500">Soglia Sensibilità ({oversoldLimit})</label>
+                <label className="text-[10px] block mb-1 text-slate-500 uppercase font-bold">Sensibilità Ciclo ({oversoldLimit})</label>
                 <input type="range" min="20" max="45" value={oversoldLimit} onChange={e => setOversoldLimit(Number(e.target.value))} className="w-full accent-blue-500" />
               </div>
               <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl">
                 <p className="text-[10px] text-blue-300 leading-tight">
                   <ArrowUpRight size={12} className="inline mr-1" />
-                  <strong>PRO Tip:</strong> Se i server Yahoo sono bloccati, l'app usa dati simulati realistici per farti testare i segnali.
+                  <strong>PRO Tip:</strong> Se Vercel è bloccato, assicurati che il file <code>vercel.json</code> sia nella cartella principale di GitHub.
                 </p>
               </div>
             </div>
@@ -337,13 +340,13 @@ export default function App() {
               {isLoading && chartData.length === 0 ? (
                  <div className="flex flex-col items-center justify-center py-20 text-slate-600 animate-pulse">
                     <Loader2 size={24} className="animate-spin mb-2" />
-                    <span className="text-[10px] uppercase font-bold">Analisi...</span>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-white">Analisi...</span>
                  </div>
               ) : signals.length === 0 ? (
-                <div className="text-center py-10 text-slate-600 text-[10px]">Nessun segnale rilevato</div>
+                <div className="text-center py-10 text-slate-600 text-[10px] italic">In attesa di dati...</div>
               ) : (
                 signals.map((s, i) => (
-                  <div key={i} className={`p-3 rounded-xl border transition-all ${
+                  <div key={i} className={`p-3 rounded-xl border transition-all hover:scale-[1.02] ${
                     s.stype === 'divergence' ? 'bg-purple-900/20 border-purple-800/40' : 
                     s.stype === 'support' ? 'bg-blue-900/10 border-blue-800/30' : 'bg-green-900/10 border-green-800/30'
                   }`}>
