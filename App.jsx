@@ -45,13 +45,13 @@ export default function App() {
       if (diff >= 0) gains += diff; else losses -= diff;
     }
     let avgGain = gains / period; let avgLoss = losses / period;
-    rsi[period] = 100 - (100 / (1 + avgGain / avgLoss));
+    rsi[period] = 100 - (100 / (1 + (avgGain / (avgLoss || 1))));
     for (let i = period + 1; i < data.length; i++) {
       let diff = data[i].price - data[i - 1].price;
       let gain = diff >= 0 ? diff : 0; let loss = diff < 0 ? -diff : 0;
       avgGain = (avgGain * (period - 1) + gain) / period;
       avgLoss = (avgLoss * (period - 1) + loss) / period;
-      rsi[i] = 100 - (100 / (1 + avgGain / avgLoss));
+      rsi[i] = 100 - (100 / (1 + (avgGain / (avgLoss || 1))));
     }
     return rsi;
   };
@@ -181,6 +181,13 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       const rCtx = rsiCanvas.getContext('2d');
       const { width, height } = canvas;
+      
+      // FIX: Ensure rsiCanvas internal size matches CSS for sharp rendering
+      rsiCanvas.width = rsiCanvas.clientWidth;
+      rsiCanvas.height = rsiCanvas.clientHeight;
+      const rw = rsiCanvas.width;
+      const rh = rsiCanvas.height;
+
       ctx.clearRect(0, 0, width, height);
 
       const prices = chartData.map(d => d.price);
@@ -213,19 +220,54 @@ export default function App() {
         }
       });
 
-      rCtx.clearRect(0, 0, rsiCanvas.width, rsiCanvas.height);
-      rCtx.strokeStyle = '#334155'; rCtx.beginPath();
-      rCtx.moveTo(0, rsiCanvas.height * 0.3); rCtx.lineTo(rsiCanvas.width, rsiCanvas.height * 0.3);
-      rCtx.moveTo(0, rsiCanvas.height * 0.7); rCtx.lineTo(rsiCanvas.width, rsiCanvas.height * 0.7);
-      rCtx.stroke();
-      rCtx.beginPath(); rCtx.strokeStyle = '#a855f7'; rCtx.lineWidth = 1.5;
+      // --- RENDERING RSI POTENZIATO ---
+      rCtx.clearRect(0, 0, rw, rh);
+      
+      // Linee di riferimento (30, 50, 70)
+      rCtx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      rCtx.lineWidth = 1;
+      rCtx.font = '8px monospace';
+      rCtx.fillStyle = '#475569';
+      [30, 50, 70].forEach(level => {
+        const y = rh - (level / 100) * rh;
+        rCtx.beginPath(); rCtx.moveTo(0, y); rCtx.lineTo(rw, y); rCtx.stroke();
+        rCtx.fillText(level, 5, y - 2);
+      });
+
+      // Sfumatura sotto l'RSI
+      const gradient = rCtx.createLinearGradient(0, 0, 0, rh);
+      gradient.addColorStop(0, 'rgba(168, 85, 247, 0.15)');
+      gradient.addColorStop(1, 'rgba(168, 85, 247, 0)');
+
+      rCtx.beginPath();
+      let firstPoint = true;
       rsi.forEach((v, i) => {
         if (v === null) return;
-        const x = (i / (rsi.length - 1)) * rsiCanvas.width;
-        const y = rsiCanvas.height - (v / 100) * rsiCanvas.height;
-        i === 0 ? rCtx.moveTo(x, y) : rCtx.lineTo(x, y);
+        const x = (i / (rsi.length - 1)) * rw;
+        const y = rh - (v / 100) * rh;
+        if (firstPoint) { rCtx.moveTo(x, y); firstPoint = false; }
+        else { rCtx.lineTo(x, y); }
+      });
+      rCtx.lineTo(rw, rh); rCtx.lineTo(0, rh);
+      rCtx.fillStyle = gradient;
+      rCtx.fill();
+
+      // Linea RSI principale
+      rCtx.beginPath();
+      rCtx.strokeStyle = '#a855f7';
+      rCtx.lineWidth = 2.2;
+      rCtx.shadowBlur = 4;
+      rCtx.shadowColor = 'rgba(168, 85, 247, 0.6)';
+      firstPoint = true;
+      rsi.forEach((v, i) => {
+        if (v === null) return;
+        const x = (i / (rsi.length - 1)) * rw;
+        const y = rh - (v / 100) * rh;
+        if (firstPoint) { rCtx.moveTo(x, y); firstPoint = false; }
+        else { rCtx.lineTo(x, y); }
       });
       rCtx.stroke();
+      rCtx.shadowBlur = 0; // Reset shadow
     };
     const timer = setTimeout(draw, 50);
     return () => clearTimeout(timer);
@@ -238,7 +280,7 @@ export default function App() {
       <header className="flex justify-between items-center mb-3 border-b border-slate-800 pb-2">
         <div className="flex items-center space-x-2">
           <Zap className={`text-yellow-500 fill-yellow-500 ${isLoading ? 'animate-pulse' : ''}`} size={20} />
-          <h1 className="text-lg font-black tracking-tighter uppercase italic">CycleMaster <span className="text-blue-500 text-[10px] not-italic">V5</span></h1>
+          <h1 className="text-lg font-black tracking-tighter uppercase italic text-white">CycleMaster <span className="text-blue-500 text-[10px] not-italic">V5 PRO</span></h1>
         </div>
         <form onSubmit={(e) => { e.preventDefault(); fetchYahooData(inputSymbol); }} className="flex">
           <input 
@@ -246,7 +288,7 @@ export default function App() {
             value={inputSymbol} 
             onChange={e => setInputSymbol(e.target.value.toUpperCase())} 
           />
-          <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700"><Search size={14} /></button>
+          <button className="bg-blue-600 px-3 py-1 rounded-r-md hover:bg-blue-700 shadow-lg"><Search size={14} /></button>
         </form>
       </header>
 
@@ -275,12 +317,12 @@ export default function App() {
               )}
             </div>
           </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 h-24 flex flex-col">
-            <h2 className="text-[8px] font-bold text-slate-400 mb-1 uppercase tracking-widest flex items-center">
-              <BarChart3 size={10} className="mr-1" /> RSI Oscillator
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 h-32 flex flex-col shadow-lg">
+            <h2 className="text-[9px] font-bold text-slate-400 mb-2 uppercase tracking-widest flex items-center">
+              <BarChart3 size={12} className="mr-1" /> RSI Oscillator (Wilder's Method)
             </h2>
-            <div className="flex-1 bg-slate-950 rounded border border-slate-800">
-              <canvas ref={rsiCanvasRef} width={1000} height={100} className="w-full h-full" />
+            <div className="flex-1 bg-slate-950 rounded border border-slate-800/50 relative overflow-hidden">
+              <canvas ref={rsiCanvasRef} className="w-full h-full" />
             </div>
           </div>
         </div>
@@ -290,18 +332,18 @@ export default function App() {
             <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Settings size={12} className="mr-1"/> Config</h3>
             <div className="space-y-2">
               <label className="text-[9px] block text-slate-500 uppercase font-bold">Sensibilità ({oversoldLimit})</label>
-              <input type="range" min="20" max="45" value={oversoldLimit} onChange={e => setOversoldLimit(Number(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg appearance-none accent-blue-500" />
+              <input type="range" min="20" max="45" value={oversoldLimit} onChange={e => setOversoldLimit(Number(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg appearance-none accent-blue-500 cursor-pointer" />
             </div>
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex-1 flex flex-col overflow-hidden shadow-2xl">
-            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Bell size={12} className="mr-1 text-blue-500"/> Segnali</h3>
+            <h3 className="text-[10px] font-bold text-slate-400 mb-2 uppercase flex items-center"><Bell size={12} className="mr-1 text-blue-500"/> Segnali Recenti</h3>
             <div className="overflow-y-auto space-y-1.5 pr-1 custom-scrollbar flex-1">
               {signals.length === 0 ? (
-                <div className="text-center py-4 text-slate-600 text-[9px] italic">No data</div>
+                <div className="text-center py-4 text-slate-600 text-[9px] italic uppercase tracking-tighter">Attesa dati...</div>
               ) : (
                 signals.map((s, i) => (
-                  <div key={i} className={`p-2 rounded-lg border text-[10px] transition-all ${
+                  <div key={i} className={`p-2 rounded-lg border text-[10px] transition-all hover:bg-slate-800/50 ${
                     s.stype === 'divergence' ? 'bg-purple-900/10 border-purple-800/30' : 
                     s.stype === 'support' ? 'bg-blue-900/5 border-blue-800/20' : 'bg-green-900/5 border-green-800/20'
                   }`}>
@@ -309,7 +351,7 @@ export default function App() {
                       <span>{s.date}</span>
                       <span className="text-slate-300 font-bold">{s.price.toFixed(4)}</span>
                     </div>
-                    <p className={`font-bold mt-0.5 ${
+                    <p className={`font-bold mt-0.5 tracking-tight ${
                       s.stype === 'divergence' ? 'text-purple-400' : 
                       s.stype === 'support' ? 'text-blue-400' : 'text-green-400'
                     }`}>{s.msg}</p>
